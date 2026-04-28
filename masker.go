@@ -24,7 +24,7 @@ type Masker struct {
 	protocolHandlers map[protocol.ProtocolType]protocol.Protocol
 }
 
-// New 创建 Guard 实例。
+// New 创建 Masker 实例。
 func New() *Masker {
 	masker := &Masker{trustedLLMConfig: *DefaultTrustedLLMConfig()}
 	masker.protocolHandlers = map[protocol.ProtocolType]protocol.Protocol{
@@ -35,8 +35,8 @@ func New() *Masker {
 	return masker
 }
 
-// NewLLMPrivacyGuardWithConfig 创建并初始化 Guard 实例。
-func NewLLMPrivacyGuardWithConfig(timeout time.Duration, sessionStoreType string, redisConnectionURL string, sessionTTL time.Duration, trustedLLMBaseURL string, trustedLLMAPIKey string, trustedLLMModelName string, trustedLLMSystemPrompt string, trustedLLMTemperature float64) (*Masker, error) {
+// NewMaskerdWithConfig 创建并初始化 Masker 实例。
+func NewMaskerdWithConfig(timeout time.Duration, sessionStoreType string, redisConnectionURL string, sessionTTL time.Duration, trustedLLMBaseURL string, trustedLLMAPIKey string, trustedLLMModelName string, trustedLLMSystemPrompt string, trustedLLMTemperature float64) (*Masker, error) {
 	if sessionStoreType == "" {
 		sessionStoreType = "memory"
 	}
@@ -109,7 +109,7 @@ func (g *Masker) WithTrustedLLMTemperature(temperature float64) *Masker {
 	return g
 }
 
-// Build 构建并校验 Guard 实例，完成依赖初始化。
+// Build 构建并校验 Masker 实例，完成依赖初始化。
 func (g *Masker) Build() (*Masker, error) {
 	if err := ValidateTrustedLLMConfig(&g.trustedLLMConfig); err != nil {
 		return nil, err
@@ -133,19 +133,34 @@ func (g *Masker) Build() (*Masker, error) {
 }
 
 // Process 处理一次完整的请求-响应脱敏流程。
-func (g *Masker) Process(httpRequest *HTTPRequest) (*HTTPResponse, error) {
+// sessionID 为可选参数，用于多轮对话场景的会话状态保持。
+func (g *Masker) Process(req *http.Request, sessionID ...string) (*http.Response, error) {
 	if g == nil {
-		return nil, fmt.Errorf("Guard 实例为空")
+		return nil, fmt.Errorf("Masker 实例为空")
 	}
 
-	if httpRequest == nil {
+	if req == nil {
 		return nil, fmt.Errorf("HTTP 请求为空")
+	}
+
+	// 读取并恢复请求体（Body 只能读取一次）
+	requestBody, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取请求体失败: %w", err)
+	}
+	req.Body = io.NopCloser(bytes.NewReader(requestBody))
+
+	// 提取可选的 sessionID
+	var sid string
+	if len(sessionID) > 0 {
+		sid = sessionID[0]
 	}
 
 	ctx, cancelFunc := context.WithTimeout(context.Background(), g.trustedLLMConfig.Timeout)
 	defer cancelFunc()
 
-	requestProtocolType, err := protocol.JudgeProtocol(httpRequest.URL, httpRequest.Body)
+	targetURL := req.URL.String()
+	requestProtocolType, err := protocol.JudgeProtocol(targetURL, requestBody)
 	if err != nil {
 		return nil, fmt.Errorf("判断请求协议失败: %w", err)
 	}
@@ -154,16 +169,17 @@ func (g *Masker) Process(httpRequest *HTTPRequest) (*HTTPResponse, error) {
 	if !ok {
 		return nil, fmt.Errorf("不支持的协议类型: %s", requestProtocolType)
 	}
-	//将请求体中的用户prompt与LLM的回复进行语义化变量替换脱敏 并维护双射哈希表
-	requestBody, _, placeholderToOriginal, requestID, err := g.processRequest(ctx, requestProtocol, httpRequest.Body, httpRequest.SessionID)
+
+	// 将请求体中的用户prompt与LLM的回复进行语义化变量替换脱敏 并维护双射哈希表
+	maskedRequestBody, _, placeholderToOriginal, requestID, err := g.processRequest(ctx, requestProtocol, requestBody, sid)
 	if err != nil {
 		return nil, fmt.Errorf("处理请求失败: %w", err)
 	}
 
 	// 使用传入请求的 URL 和请求体，并强制改写为非流式请求。
-	targetURL, requestBody := requestProtocol.ForceNonStream(httpRequest.URL, requestBody)
+	targetURL, maskedRequestBody = requestProtocol.ForceNonStream(targetURL, maskedRequestBody)
 
-	upstreamRequest, err := g.buildUpstreamRequest(httpRequest.Method, targetURL, httpRequest.Headers, requestBody)
+	upstreamRequest, err := g.buildUpstreamRequest(req.Method, targetURL, req.Header, maskedRequestBody)
 	if err != nil {
 		return nil, fmt.Errorf("构建上游请求失败: %w", err)
 	}
@@ -178,12 +194,13 @@ func (g *Masker) Process(httpRequest *HTTPRequest) (*HTTPResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("读取上游响应失败: %w", err)
 	}
-	//上游非正常响应，将原始响应返回给调用者，不再进行语义化变量替换为原始值
+
+	// 上游非正常响应，将原始响应返回给调用者，不再进行语义化变量替换为原始值
 	if upstreamResponse.StatusCode < 200 || upstreamResponse.StatusCode >= 300 {
-		return &HTTPResponse{
-			StatusCode: upstreamResponse.StatusCode,
-			Headers:    upstreamResponse.Header,
-			Body:       upstreamResponseBody,
+		return &http.Response{
+			StatusCode:    upstreamResponse.StatusCode,
+			Header:        upstreamResponse.Header,
+			Body:          io.NopCloser(bytes.NewReader(upstreamResponseBody)),
 		}, nil
 	}
 
@@ -198,10 +215,10 @@ func (g *Masker) Process(httpRequest *HTTPRequest) (*HTTPResponse, error) {
 		}
 	}
 
-	return &HTTPResponse{
+	return &http.Response{
 		StatusCode: upstreamResponse.StatusCode,
-		Headers:    upstreamResponse.Header,
-		Body:       responseBody,
+		Header:     upstreamResponse.Header,
+		Body:       io.NopCloser(bytes.NewReader(responseBody)),
 	}, nil
 }
 
@@ -301,14 +318,17 @@ func (g *Masker) processRequest(ctx context.Context, requestProtocol protocol.Pr
 }
 
 // buildUpstreamRequest 构建发送给上游 LLM 的 HTTP 请求。
-func (g *Masker) buildUpstreamRequest(method string, targetURL string, headers map[string]string, requestBody []byte) (*http.Request, error) {
+func (g *Masker) buildUpstreamRequest(method string, targetURL string, headers http.Header, requestBody []byte) (*http.Request, error) {
 	upstreamRequest, err := http.NewRequest(method, targetURL, bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, fmt.Errorf("创建上游 HTTP 请求失败: %w", err)
 	}
 
-	for key, value := range headers {
-		upstreamRequest.Header.Set(key, value)
+	// 复制原始请求的 Header
+	for key, values := range headers {
+		for _, value := range values {
+			upstreamRequest.Header.Add(key, value)
+		}
 	}
 	if upstreamRequest.Header.Get("Content-Type") == "" {
 		upstreamRequest.Header.Set("Content-Type", "application/json")
