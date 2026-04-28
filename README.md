@@ -193,6 +193,9 @@ func (m *Masker) Process(req *http.Request, sessionID ...string) (*http.Response
 - `sessionID`: 可选参数，用于多轮对话的会话状态保持
 - 返回: 标准 `http.Response`，调用方需要 `defer resp.Body.Close()`
 
+## 友情链接
+
+[Linux.Do](https://linux.do)
 ## License
 
 MIT
