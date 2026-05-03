@@ -30,5 +30,5 @@ type Protocol interface {
 	RewriteResponse(body []byte, placeholderToOriginal map[string]string) ([]byte, error)
 	// ForceNonStream 强制关闭流式传输，返回处理后的 URL 和请求体。
 	// Gemini 协议处理 URL，Anthropic/OpenAI 协议处理请求体中的 stream 字段。
-	ForceNonStream(url string, body []byte) (string, []byte)
+	ForceNonStream(url string, body []byte) (string, []byte, error)
 }
