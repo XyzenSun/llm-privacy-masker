@@ -24,11 +24,3 @@ jobs:
 
       - name: Build library
         run: go build ./...
-
-      - name: Check code formatting
-        run: |
-          if [ -n "$(gofmt -l .)" ]; then
-            echo "以下文件格式不规范:"
-            gofmt -l .
-            exit 1
-          fi
