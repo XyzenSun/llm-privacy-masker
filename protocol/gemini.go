@@ -260,9 +260,9 @@ func (g *Gemini) RewriteResponse(body []byte, placeholderToOriginal map[string]s
 
 // ForceNonStream Gemini 协议将 URL 从流式端点改为非流式端点，请求体不变。
 // :streamGenerateContent -> :generateContent
-func (g *Gemini) ForceNonStream(url string, body []byte) (string, []byte) {
+func (g *Gemini) ForceNonStream(url string, body []byte) (string, []byte, error) {
 	newURL := strings.Replace(url, ":streamGenerateContent", ":generateContent", 1)
-	return newURL, body
+	return newURL, body, nil
 }
 
 // SetAPIKey Gemini 协议在 URL 中添加 key 参数。

@@ -177,7 +177,10 @@ func (g *Masker) Process(req *http.Request, sessionID ...string) (*http.Response
 	}
 
 	// 使用传入请求的 URL 和请求体，并强制改写为非流式请求。
-	targetURL, maskedRequestBody = requestProtocol.ForceNonStream(targetURL, maskedRequestBody)
+	targetURL, maskedRequestBody, err = requestProtocol.ForceNonStream(targetURL, maskedRequestBody)
+	if err != nil {
+		return nil, fmt.Errorf("强制关闭流式传输失败: %w", err)
+	}
 
 	upstreamRequest, err := g.buildUpstreamRequest(req.Method, targetURL, req.Header, maskedRequestBody)
 	if err != nil {
@@ -197,6 +200,17 @@ func (g *Masker) Process(req *http.Request, sessionID ...string) (*http.Response
 
 	// 上游非正常响应，将原始响应返回给调用者，不再进行语义化变量替换为原始值
 	if upstreamResponse.StatusCode < 200 || upstreamResponse.StatusCode >= 300 {
+		// 清理请求级映射，避免残留脏数据
+		if requestID != "" {
+			if deleteErr := g.store.DeleteRequestMappings(requestID); deleteErr != nil {
+				// 清理失败不影响错误响应的返回，仅记录错误
+				return &http.Response{
+					StatusCode:    upstreamResponse.StatusCode,
+					Header:        upstreamResponse.Header,
+					Body:          io.NopCloser(bytes.NewReader(upstreamResponseBody)),
+				}, fmt.Errorf("删除请求映射失败: %w", deleteErr)
+			}
+		}
 		return &http.Response{
 			StatusCode:    upstreamResponse.StatusCode,
 			Header:        upstreamResponse.Header,

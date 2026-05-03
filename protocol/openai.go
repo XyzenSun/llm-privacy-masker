@@ -259,18 +259,17 @@ func (o *OpenAI) RewriteResponse(body []byte, placeholderToOriginal map[string]s
 }
 
 // ForceNonStream OpenAI 协议在请求体中设置 stream=false，URL 不变。
-func (o *OpenAI) ForceNonStream(url string, body []byte) (string, []byte) {
+func (o *OpenAI) ForceNonStream(url string, body []byte) (string, []byte, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
-		// 解析失败，返回原值
-		return url, body
+		return "", nil, fmt.Errorf("OpenAI 强制关闭流式传输失败：解析请求体失败: %w", err)
 	}
 	payload["stream"] = false
 	newBody, err := json.Marshal(payload)
 	if err != nil {
-		return url, body
+		return "", nil, fmt.Errorf("OpenAI 强制关闭流式传输失败：序列化请求体失败: %w", err)
 	}
-	return url, newBody
+	return url, newBody, nil
 }
 
 // SetAPIKey OpenAI 协议无需在 URL 中设置 API Key，URL 不变。

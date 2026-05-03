@@ -18,5 +18,5 @@ jobs:
           go-version: '1.23'
 
       - name: Build and run function test
-        working-directory: .github/test/functiontest/caller_test
+        working-directory: .github/test/functiontest/caller_test/mock
         run: go mod tidy && go build -o caller_test . && ./caller_test
