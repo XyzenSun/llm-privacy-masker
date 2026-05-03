@@ -17,6 +17,10 @@ from typing import Dict, List, Optional
 
 import requests
 
+
+class BenchmarkRuntimeError(RuntimeError):
+    """Raised when the benchmark cannot complete a case due to runtime/integration errors."""
+
 # ── Data structures ──────────────────────────────────────────────────
 
 
@@ -43,11 +47,26 @@ class FailEntry:
 
 
 @dataclass
+class RuntimeErrorEntry:
+    prompt: str
+    error: str
+
+
+@dataclass
+class CaseResult:
+    actual: Optional[Dict[str, str]] = None
+    fail_entry: Optional[FailEntry] = None
+    runtime_error: Optional[RuntimeErrorEntry] = None
+
+
+@dataclass
 class BenchmarkResult:
     total: int = 0
     success: int = 0
     fail: int = 0
+    runtime_error: int = 0
     fail_list: List[FailEntry] = field(default_factory=list)
+    runtime_error_list: List[RuntimeErrorEntry] = field(default_factory=list)
 
 
 # ── Placeholder validation (matches Go code) ────────────────────────
@@ -129,8 +148,20 @@ def detect_mappings(config: TrustedLLMConfig, text: str) -> Dict[str, str]:
         headers["Authorization"] = f"Bearer {config.api_key}"
 
     max_retries = 3
+    resp = None
     for attempt in range(max_retries):
-        resp = requests.post(url, headers=headers, json=request_body, timeout=120)
+        try:
+            resp = requests.post(url, headers=headers, json=request_body, timeout=120)
+        except requests.RequestException as e:
+            if attempt < max_retries - 1:
+                wait = 2 * (attempt + 1)
+                print(f"    Retry {attempt+1}/{max_retries} after {wait}s (request error: {e})")
+                time.sleep(wait)
+                continue
+            raise BenchmarkRuntimeError(
+                f"TrustedLLM request failed after {max_retries} attempts: {e}"
+            ) from e
+
         if 200 <= resp.status_code < 300:
             break
         if attempt < max_retries - 1:
@@ -138,27 +169,57 @@ def detect_mappings(config: TrustedLLMConfig, text: str) -> Dict[str, str]:
             print(f"    Retry {attempt+1}/{max_retries} after {wait}s (status {resp.status_code})")
             time.sleep(wait)
         else:
-            raise RuntimeError(
+            raise BenchmarkRuntimeError(
                 f"TrustedLLM returned status {resp.status_code} after {max_retries} attempts: {resp.text[:500]}"
             )
 
+    if resp is None:
+        raise BenchmarkRuntimeError("TrustedLLM request did not produce a response")
+
+    try:
+        payload = resp.json()
+    except json.JSONDecodeError as e:
+        raise BenchmarkRuntimeError(
+            f"TrustedLLM response is not valid JSON: {resp.text[:500]}"
+        ) from e
+
     # Extract content from OpenAI format response (matches Go extractOpenAIResponseContent)
-    payload = resp.json()
     choices = payload.get("choices", [])
     if not choices:
-        raise RuntimeError("TrustedLLM response missing choices field")
+        raise BenchmarkRuntimeError(
+            f"TrustedLLM response missing choices field: {json.dumps(payload, ensure_ascii=False)[:500]}"
+        )
 
     message = choices[0].get("message", {})
     content = message.get("content", "")
-    if not content:
-        raise RuntimeError("TrustedLLM response content is empty")
+    if isinstance(content, list):
+        content = "\n".join(
+            part.get("text", "") for part in content if isinstance(part, dict) and part.get("text")
+        )
 
-    # Parse mapping response (matches Go parseTrustedLLMMappingResponse)
-    response_data = json.loads(content)
-    entries = response_data.get("entries", [])
+    if not isinstance(content, str) or not content.strip():
+        raise BenchmarkRuntimeError(
+            f"TrustedLLM response content is empty or invalid: {json.dumps(payload, ensure_ascii=False)[:500]}"
+        )
+
+    try:
+        response_data = json.loads(content)
+    except json.JSONDecodeError as e:
+        raise BenchmarkRuntimeError(
+            f"TrustedLLM message content is not valid JSON: {content[:500]}"
+        ) from e
+
+    entries = response_data.get("entries")
+    if not isinstance(entries, list):
+        raise BenchmarkRuntimeError(
+            f"TrustedLLM mapping response missing valid entries field: {json.dumps(response_data, ensure_ascii=False)[:500]}"
+        )
 
     original_to_placeholder: Dict[str, str] = {}
     for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+
         original = entry.get("original", "")
         placeholder = entry.get("placeholder", "")
         entry_type = entry.get("type", "")
@@ -230,26 +291,38 @@ def compare_mappings(expected: Dict[str, str], actual: Dict[str, str], mode: str
 
 def test_benchmark(
     config: TrustedLLMConfig, test_case: TestCase, mode: str = "strict"
-) -> Optional[FailEntry]:
+) -> CaseResult:
     """
     Run a single benchmark test case.
-    Returns None on success, or a FailEntry on failure.
+
+    - Mapping mismatch: treated as benchmark failure (model/prompt quality issue)
+    - Request/response/runtime issue: treated as runtime error (program/integration issue)
     """
     try:
         actual = detect_mappings(config, test_case.prompt)
+    except BenchmarkRuntimeError as e:
+        return CaseResult(
+            runtime_error=RuntimeErrorEntry(prompt=test_case.prompt, error=str(e))
+        )
     except Exception as e:
-        print(f"Error processing '{test_case.prompt}': {e}")
-        # On error, actual is empty dict — treat as failure
-        actual = {}
+        return CaseResult(
+            runtime_error=RuntimeErrorEntry(
+                prompt=test_case.prompt,
+                error=f"Unexpected benchmark error: {e}",
+            )
+        )
 
     if compare_mappings(test_case.expected, actual, mode):
-        return None  # success
-    else:
-        return FailEntry(
+        return CaseResult(actual=actual)
+
+    return CaseResult(
+        actual=actual,
+        fail_entry=FailEntry(
             prompt=test_case.prompt,
             expected=test_case.expected,
             actual=actual,
-        )
+        ),
+    )
 
 
 # ── Loaders ──────────────────────────────────────────────────────────
@@ -340,6 +413,7 @@ def write_result(result: BenchmarkResult, output_path: str = None, mode: str = "
         "total": result.total,
         "success": result.success,
         "fail": result.fail,
+        "runtime_error": result.runtime_error,
         "mode": mode,
         "fail_list": [
             {
@@ -348,6 +422,13 @@ def write_result(result: BenchmarkResult, output_path: str = None, mode: str = "
                 "actual": entry.actual,
             }
             for entry in result.fail_list
+        ],
+        "runtime_error_list": [
+            {
+                "prompt": entry.prompt,
+                "error": entry.error,
+            }
+            for entry in result.runtime_error_list
         ],
     }
 
@@ -406,25 +487,35 @@ def main():
         for future in as_completed(futures):
             idx = futures[future]
             tc = test_cases[idx]
-            fail_entry = future.result()
+            case_result = future.result()
 
-            if fail_entry is None:
+            if case_result.runtime_error is not None:
+                result.runtime_error += 1
+                result.runtime_error_list.append(case_result.runtime_error)
+                print(f"  [ERROR] {tc.prompt}")
+                print(f"    error: {case_result.runtime_error.error}")
+                continue
+
+            if case_result.fail_entry is None:
                 result.success += 1
                 print(f"  [PASS] {tc.prompt}")
             else:
                 result.fail += 1
-                result.fail_list.append(fail_entry)
+                result.fail_list.append(case_result.fail_entry)
                 print(f"  [FAIL] {tc.prompt}")
-                print(f"    expected: {fail_entry.expected}")
-                print(f"    actual:   {fail_entry.actual}")
+                print(f"    expected: {case_result.fail_entry.expected}")
+                print(f"    actual:   {case_result.fail_entry.actual}")
 
     write_result(result, output_path, mode)
 
     print()
-    print(f"Total: {result.total}, Success: {result.success}, Fail: {result.fail} (mode: {mode})")
+    print(
+        f"Total: {result.total}, Success: {result.success}, Fail: {result.fail}, "
+        f"RuntimeError: {result.runtime_error} (mode: {mode})"
+    )
 
-    # Exit with non-zero code if there are failures (useful for CI)
-    if result.fail > 0:
+    # Only runtime/integration errors should fail CI.
+    if result.runtime_error > 0:
         sys.exit(1)
 
 
