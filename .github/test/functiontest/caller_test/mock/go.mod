@@ -10,4 +10,4 @@ require (
 	github.com/redis/go-redis/v9 v9.7.0 // indirect
 )
 
-replace github.com/xyzensun/llm-privacy-masker => ../../../../
+replace github.com/xyzensun/llm-privacy-masker => ../../../../../
