@@ -1,1 +1,22 @@
-#功能测试-以调用者视角
+name: Function Test
+
+on:
+  push:
+    branches: ['**']
+
+jobs:
+  function-test:
+    name: Caller Perspective Function Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build and run function test
+        working-directory: .github/test/functiontest/caller_test
+        run: go mod tidy && go build -o caller_test . && ./caller_test
