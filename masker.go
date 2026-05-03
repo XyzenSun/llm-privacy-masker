@@ -243,7 +243,8 @@ func (g *Masker) processRequest(ctx context.Context, requestProtocol protocol.Pr
 	}
 
 	if sessionID != "" && cacheHit {
-		fmt.Printf("processRequest sessionID=%q cacheHit=%t mode=incremental o2p=%d p2o=%d\n", sessionID, cacheHit, len(originalToPlaceholder), len(placeholderToOriginal))
+		//注释调试注释
+		//fmt.Printf("processRequest sessionID=%q cacheHit=%t mode=incremental o2p=%d p2o=%d\n", sessionID, cacheHit, len(originalToPlaceholder), len(placeholderToOriginal))
 		latestUserText, hasUserText, err := requestProtocol.LatestUserText(requestBody)
 		if err != nil {
 			return nil, nil, nil, "", err
@@ -268,7 +269,8 @@ func (g *Masker) processRequest(ctx context.Context, requestProtocol protocol.Pr
 			}
 		}
 	} else {
-		fmt.Printf("processRequest sessionID=%q cacheHit=%t mode=full o2p=%d p2o=%d\n", sessionID, cacheHit, len(originalToPlaceholder), len(placeholderToOriginal))
+		//注释调试注释
+		//fmt.Printf("processRequest sessionID=%q cacheHit=%t mode=full o2p=%d p2o=%d\n", sessionID, cacheHit, len(originalToPlaceholder), len(placeholderToOriginal))
 		textNodes, extractionError := requestProtocol.ExtractRequestTextNodes(requestBody)
 		if extractionError != nil {
 			return nil, nil, nil, "", extractionError
