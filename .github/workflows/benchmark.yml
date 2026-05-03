@@ -1,1 +1,59 @@
-#测试不同小模型对隐私数据Mask的正确率 仅手动运行
+# Benchmark test for TrustedLLM privacy detection accuracy - manual run only
+
+name: Benchmark Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Comparison mode (loose/strict/exact)'
+        required: false
+        default: 'loose'
+        type: choice
+        options:
+          - loose
+          - strict
+          - exact
+      concurrency:
+        description: 'Concurrency level'
+        required: false
+        default: '2'
+        type: string
+
+jobs:
+  benchmark:
+    name: Run Benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Create .env from secrets
+        run: |
+          cat > .github/test/benchmark/.env << EOF
+          trustedllm_url=${{ secrets.TRUSTEDLLM_URL }}
+          trustedllm_api_key=${{ secrets.TRUSTEDLLM_API_KEY }}
+          trustedllm_model=${{ secrets.TRUSTEDLLM_MODEL }}
+          EOF
+
+      - name: Run benchmark
+        run: python .github/test/benchmark/run.py --mode ${{ inputs.mode }} --concurrency ${{ inputs.concurrency }}
+
+      - name: Display benchmark result
+        if: always()
+        run: cat .github/test/benchmark/benchmark_result.json
+
+      - name: Upload benchmark result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-result
+          path: .github/test/benchmark/benchmark_result.json
