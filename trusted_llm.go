@@ -10,7 +10,9 @@ import (
 	"strings"
 )
 
-// TrustedLLMClient 调用可信 LLM 生成脱敏映射。
+// TrustedLLMClient 默认系统提示词
+const defaultTrustedLLMSystemPrompt = `你是一个隐私信息识别专家。请从用户文本中识别手机号、邮箱、身份证号等敏感信息。 只允许返回严格 JSON 对象，不要输出任何额外文本、markdown、代码块或解释。 规则： 1. 顶层必须是对象，且必须包含 entries 数组字段 2. 每个 entry 必须包含 original、placeholder、type 三个非空字符串字段 3. placeholder 必须使用具体类型加数字的格式，例如 ${PHONE_1}、${EMAIL_2}、${ID_CARD_3} 4. placeholder 必须符合当前运行时校验规则，不要返回 ${TYPE_N} 这种示例占位符 5. 如果没有识别到新的敏感信息，返回 {"entries":[]} 正确示例： {"entries":[{"original":"13812345678","placeholder":"${PHONE_1}","type":"PHONE"}]} 错误示例（禁止返回）： 这里是结果：{"entries":[{"original":"13812345678","placeholder":"${PHONE_1}","type":"PHONE"}]} {"entries":[{"original":"13812345678","placeholder":"${TYPE_N}","type":"PHONE"}]}`
+
 type TrustedLLMClient struct {
 	clientConfig TrustedLLMClientConfig
 	httpClient   *http.Client
@@ -185,22 +187,7 @@ func buildTrustedLLMSystemPrompt(configuredPrompt string) string {
 		return configuredPrompt
 	}
 
-	return `你是一个隐私信息识别器。请从用户文本中识别手机号、邮箱、身份证号等敏感信息。
-只允许返回严格 JSON 对象，不要输出任何额外文本、markdown、代码块或解释。
-
-规则：
-1. 顶层必须是对象，且必须包含 entries 数组字段
-2. 每个 entry 必须包含 original、placeholder、type 三个非空字符串字段
-3. placeholder 必须使用具体类型加数字的格式，例如 ${PHONE_1}、${EMAIL_2}、${ID_CARD_3}
-4. placeholder 必须符合当前运行时校验规则，不要返回 ${TYPE_N} 这种示例占位符
-5. 如果没有识别到新的敏感信息，返回 {"entries":[]}
-
-正确示例：
-{"entries":[{"original":"13812345678","placeholder":"${PHONE_1}","type":"PHONE"}]}
-
-错误示例（禁止返回）：
-这里是结果：{"entries":[{"original":"13812345678","placeholder":"${PHONE_1}","type":"PHONE"}]}
-{"entries":[{"original":"13812345678","placeholder":"${TYPE_N}","type":"PHONE"}]}`
+	return defaultTrustedLLMSystemPrompt
 }
 
 func trustedLLMResponseSchema() map[string]any {
