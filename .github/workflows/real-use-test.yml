@@ -1,0 +1,33 @@
+name: Real Environment Use Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  real-use-test:
+    name: Real Environment Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Create .env from secrets
+        working-directory: .github/test/functiontest/caller_test/real_test
+        run: |
+          cat > .env << EOF
+          trustedllm_url=${{ secrets.TRUSTEDLLM_URL }}
+          trustedllm_api_key=${{ secrets.TRUSTEDLLM_API_KEY }}
+          trustedllm_model=${{ secrets.TRUSTEDLLM_MODEL }}
+          cloudllm_url=${{ secrets.CLOUDLLM_URL }}
+          cloudllm_api_key=${{ secrets.CLOUDLLM_API_KEY }}
+          cloudllm_model=${{ secrets.CLOUDLLM_MODEL }}
+          EOF
+
+      - name: Build and run real test
+        working-directory: .github/test/functiontest/caller_test/real_test
+        run: go mod tidy && go build -o real_test . && ./real_test
