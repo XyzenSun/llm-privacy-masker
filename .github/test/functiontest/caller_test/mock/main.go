@@ -332,7 +332,7 @@ func waitForServerReady(baseURL string) {
 // createMaskerInstance 创建 Masker 实例，配置 Mock TrustedLLM 地址和内存存储。
 // sessionStoreType 使用 "memory"，不依赖 Redis。
 func createMaskerInstance() (*masker.Masker, error) {
-	return masker.New().
+	return masker.Builder().
 		WithTimeout(testTimeout).
 		WithSessionStoreType("memory").
 		WithTrustedLLMBaseURL(mockLLMBaseURL).

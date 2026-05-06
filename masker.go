@@ -24,8 +24,8 @@ type Masker struct {
 	protocolHandlers map[protocol.ProtocolType]protocol.Protocol
 }
 
-// New 创建 Masker 实例。
-func New() *Masker {
+// Builder 创建 Masker Builder 实例，用于通过链式调用配置并构建 Masker。
+func Builder() *Masker {
 	masker := &Masker{trustedLLMConfig: *DefaultTrustedLLMConfig()}
 	masker.protocolHandlers = map[protocol.ProtocolType]protocol.Protocol{
 		protocol.ProtocolTypeOpenAI:    protocol.NewOpenAI(),
@@ -35,13 +35,13 @@ func New() *Masker {
 	return masker
 }
 
-// NewMaskerdWithConfig 创建并初始化 Masker 实例。
-func NewMaskerdWithConfig(timeout time.Duration, sessionStoreType string, redisConnectionURL string, sessionTTL time.Duration, trustedLLMBaseURL string, trustedLLMAPIKey string, trustedLLMModelName string, trustedLLMSystemPrompt string, trustedLLMTemperature float64) (*Masker, error) {
+// New 创建并初始化 Masker 实例。
+func New(timeout time.Duration, sessionStoreType string, redisConnectionURL string, sessionTTL time.Duration, trustedLLMBaseURL string, trustedLLMAPIKey string, trustedLLMModelName string, trustedLLMSystemPrompt string, trustedLLMTemperature float64) (*Masker, error) {
 	if sessionStoreType == "" {
 		sessionStoreType = "memory"
 	}
 
-	masker := New().
+	masker := Builder().
 		WithTimeout(timeout).
 		WithRedisConnectionURL(redisConnectionURL).
 		WithSessionStoreType(sessionStoreType).

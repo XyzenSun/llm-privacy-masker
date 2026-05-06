@@ -81,7 +81,7 @@ func loadEnvConfig(envFilePath string) (*envConfig, error) {
 // ==================== Masker 实例创建 ====================
 
 func createMaskerInstance(env *envConfig) (*masker.Masker, error) {
-	return masker.New().
+	return masker.Builder().
 		WithTimeout(testTimeout).
 		WithSessionStoreType("memory").
 		WithTrustedLLMBaseURL(env.trustedLLMURL).
